@@ -23,8 +23,30 @@
   input { flex: 1; min-width: 0; height: 54px; padding: 0 14px; border: 2px solid #8c959f; border-radius: 10px; background: #fff; color: var(--ink); }
   .row { display: flex; gap: 10px; flex-wrap: wrap; }
 
-  .steps { margin: 0 0 16px; padding-left: 1.3em; }
+  [hidden] { display: none !important; }
+  .steps { margin: 0 0 12px; padding-left: 1.3em; }
   .steps li { margin-bottom: 4px; }
+  .sites { color: var(--dim); font-size: .9rem; }
+  .has-preview .intro { display: none; }
+
+  #preview { display: block; padding: 16px; margin: 0 0 14px; }
+  .media { display: flex; gap: 14px; align-items: flex-start; }
+  #thumb { width: 176px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; background: #e3e8ee; flex: none; }
+  .media p { margin: 0 0 4px; }
+  #pv-title { color: var(--ink); font-weight: 600; }
+  #pv-duration, #pv-count, #pv-wait { color: var(--dim); }
+  #pv-error { color: var(--bad); font-weight: 600; margin: 0; }
+  #pv-count { margin: 10px 0 0; font-size: .9rem; }
+  fieldset { border: 0; padding: 0; margin: 12px 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  legend { padding: 0; margin-bottom: 6px; font-weight: 600; }
+  .q { display: flex; gap: 10px; align-items: center; padding: 8px 12px; border: 2px solid var(--line); border-radius: 10px; cursor: pointer; }
+  .q:hover { border-color: var(--accent); }
+  .q:has(:checked) { border-color: var(--accent); background: #eef4ff; }
+  .q:has(:focus-visible) { outline: 3px solid #8fb6ff; outline-offset: 2px; }
+  .q input { flex: none; width: 22px; height: 22px; margin: 0; padding: 0; accent-color: var(--accent); }
+  .q b, .q small { display: block; }
+  .q small { color: var(--dim); font-size: .85rem; }
+  @media (max-width: 520px) { fieldset { grid-template-columns: 1fr; } #thumb { width: 120px; } }
   #go { width: 100%; min-height: 66px; font-size: 1.3rem; }
   #hint { min-height: 1.45em; margin: 8px 0; color: var(--bad); font-weight: 600; }
   #hint.calm { color: var(--ok); }
@@ -46,8 +68,9 @@
   summary { cursor: pointer; }
   pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; }
 
-  footer { margin-top: 20px; padding-top: 16px; border-top: 2px solid var(--line); color: var(--dim); font-size: .9rem; }
+  footer { margin-top: 18px; padding-top: 14px; border-top: 2px solid var(--line); color: var(--dim); font-size: .9rem; }
   footer button { min-height: 46px; margin-top: 10px; }
+  #where { color: var(--ink); overflow-wrap: anywhere; }
 
   /* Что показывать на каком этапе */
   [data-phase=prep] #work, [data-phase=down] #work, [data-phase=fin] #work,
@@ -86,25 +109,45 @@
   </section>
 
   <div class="form">
-    <ol class="steps">
-      <li>Откройте видео в интернете и скопируйте его адрес (ссылку).</li>
-      <li>Нажмите «Вставить» — ссылка появится в поле.</li>
-      <li>Нажмите «Скачать».</li>
-    </ol>
+    <div class="intro">
+      <ol class="steps">
+        <li>Откройте видео в интернете и скопируйте его адрес (ссылку).</li>
+        <li>Нажмите «Вставить» — ссылка появится в поле.</li>
+        <li>Нажмите «Скачать».</li>
+      </ol>
+      <p class="sites">Работает с YouTube, Одноклассниками, Rutube и ВК Видео.</p>
+    </div>
     <form id="form">
       <div class="row">
         <input id="url" type="text" placeholder="Ссылка на видео" aria-label="Ссылка на видео" autocomplete="off" spellcheck="false">
         <button id="paste" type="button">Вставить</button>
       </div>
       <p id="hint" role="status"></p>
+
+      <section id="preview" class="card" aria-live="polite" hidden>
+        <p id="pv-wait">Смотрю, что это за видео…</p>
+        <p id="pv-error"></p>
+        <div id="pv-media" class="media">
+          <img id="thumb" alt="" referrerpolicy="no-referrer">
+          <div>
+            <p id="pv-title" class="title"></p>
+            <p id="pv-duration"></p>
+          </div>
+        </div>
+        <p id="pv-count"></p>
+        <fieldset id="quality"></fieldset>
+      </section>
+
       <button id="go" class="primary">Скачать</button>
     </form>
   </div>
 
   <footer>
-    Работает с YouTube, Одноклассниками, Rutube и ВК Видео.
-    Видео сохраняются в папку «Видео» → «Скачанные видео».<br>
-    <button id="folder2" type="button">Открыть папку с видео</button>
+    Видео сохраняются в папку: <span id="where"></span>
+    <div class="row">
+      <button id="folder2" type="button">Открыть папку</button>
+      <button id="change" type="button">Изменить папку…</button>
+    </div>
   </footer>
 </main>
 <div id="gone">Программа закрыта.<br>Запустите её заново с рабочего стола.</div>
@@ -115,6 +158,8 @@ const url = $('url');
 const busy = () => ['prep', 'down', 'fin'].includes(phase);
 let phase = 'idle';
 let used = ''; // ссылка, которую уже вставляли или скачивали: сама она второй раз не вставится
+let looked = null; // ссылка, для которой уже просили предпросмотр
+let shown = ''; // предпросмотр, который сейчас нарисован
 
 function hint(text, calm) {
   $('hint').textContent = text;
@@ -135,22 +180,69 @@ async function paste(auto) {
   }
   used = url.value = link;
   hint(auto ? 'Ссылка вставилась сама. Осталось нажать «Скачать».' : '', true);
+  look();
+}
+
+// Просит программу показать обложку, длительность и варианты качества для ссылки в поле.
+function look() {
+  const link = url.value.trim();
+  if (busy() || link === looked) return;
+  looked = link;
+  post('look', new URLSearchParams({url: link}));
+}
+
+function renderPreview(p) {
+  const key = JSON.stringify(p || null);
+  if (key === shown) return; // не перерисовываем зря: сбросился бы выбор качества
+  shown = key;
+  document.body.classList.toggle('has-preview', !!p);
+  $('preview').hidden = !p;
+  if (!p) return;
+  $('pv-wait').hidden = !p.loading;
+  $('pv-error').textContent = p.error || '';
+  $('pv-media').hidden = !p.title;
+  $('pv-title').textContent = p.title || '';
+  $('pv-duration').textContent = p.duration ? 'Длительность: ' + p.duration : '';
+  $('thumb').hidden = !p.thumb;
+  if (p.thumb) $('thumb').src = p.thumb;
+  $('pv-count').textContent = p.count > 1
+    ? `Это подборка из ${p.count} видео — скачаются все. Показано первое, размер указан за одно.` : '';
+
+  const options = p.options || [];
+  const box = $('quality');
+  box.hidden = !options.length;
+  box.replaceChildren();
+  if (options.length) box.append(Object.assign(document.createElement('legend'), {textContent: 'Качество'}));
+  options.forEach((o, i) => {
+    const row = Object.assign(document.createElement('label'), {className: 'q'});
+    const radio = Object.assign(document.createElement('input'), {type: 'radio', name: 'quality', value: o.quality, checked: i === p.pick});
+    const text = document.createElement('span');
+    text.append(Object.assign(document.createElement('b'), {textContent: o.label}),
+                Object.assign(document.createElement('small'), {textContent: o.size || 'размер неизвестен'}));
+    row.append(radio, text);
+    box.append(row);
+  });
 }
 
 async function start() {
   if (!url.value.trim()) await paste(false);
   if (!url.value.trim()) return;
   used = url.value;
-  const r = await post('start', new URLSearchParams({url: url.value}));
+  const quality = document.querySelector('#preview:not([hidden]) input[name=quality]:checked');
+  const r = await post('start', new URLSearchParams({url: url.value, quality: quality ? quality.value : ''}));
   if (r.ok) hint('');
   else hint('Это не похоже на ссылку. Скопируйте адрес страницы с видео и нажмите «Вставить».');
 }
 
 function render(st) {
-  const was = phase;
+  const was = phase, wasBusy = busy();
   phase = st.phase;
   document.body.dataset.phase = phase;
-  if (phase === 'done' && was !== 'done') { url.value = ''; hint(''); paste(true); }
+  if (phase === 'done' && was !== 'done') { url.value = ''; hint(''); look(); paste(true); }
+  // Вернулись к форме после отмены или ошибки, а предпросмотра нет — запрашиваем заново.
+  if (wasBusy && !busy() && phase !== 'done' && !st.preview) { looked = null; look(); }
+  renderPreview(st.preview);
+  $('where').textContent = st.folder || '';
 
   const known = phase === 'down' && st.percent >= 0;
   $('work-h').textContent = {prep: 'Ищу видео…', down: 'Скачиваю видео…', fin: 'Заканчиваю, осталось чуть-чуть…'}[phase] || '';
@@ -176,10 +268,18 @@ $('paste').onclick = () => paste(false);
 $('cancel').onclick = () => post('cancel');
 $('watch').onclick = () => post('open/file');
 $('folder').onclick = $('folder2').onclick = () => post('open/folder');
+$('change').onclick = async () => {
+  $('change').disabled = true; // пока открыто окно выбора папки
+  try { await post('folder'); } catch {}
+  $('change').disabled = false;
+};
+$('thumb').onerror = () => { $('thumb').hidden = true; };
+let typing;
+url.oninput = () => { clearTimeout(typing); typing = setTimeout(look, 700); };
 addEventListener('focus', () => paste(true));
 document.documentElement.addEventListener('mouseenter', () => paste(true));
 poll();
-paste(true);
+paste(true).then(look);
 </script>
 </body>
 </html>

@@ -19,6 +19,8 @@ import (
 var (
 	user32   = windows.NewLazySystemDLL("user32.dll")
 	kernel32 = windows.NewLazySystemDLL("kernel32.dll")
+	shell32  = windows.NewLazySystemDLL("shell32.dll")
+	ole32    = windows.NewLazySystemDLL("ole32.dll")
 )
 
 func findWindow() uintptr {
@@ -64,7 +66,7 @@ func runWindow(url, data string) bool {
 		dpi = int(v)
 	}
 	width := max(400, min(780*dpi/96, metric(0)))     // SM_CXSCREEN
-	height := max(400, min(760*dpi/96, metric(1)-80)) // SM_CYSCREEN, минус панель задач
+	height := max(400, min(800*dpi/96, metric(1)-80)) // SM_CYSCREEN, минус панель задач
 
 	w := webview2.NewWithOptions(webview2.WebViewOptions{
 		DataPath:  data,
@@ -125,30 +127,63 @@ func hide(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
 }
 
-// job собирает yt-dlp и всё, что он запускает (свою вторую половину, ffmpeg, deno),
-// чтобы «Отменить» и закрытие программы останавливали их разом.
-var job = func() windows.Handle {
-	h, err := windows.CreateJobObject(nil, nil)
+// track помещает запущенный yt-dlp в отдельное «задание» Windows и возвращает функцию,
+// которая останавливает его вместе со всем, что он запустил (свою вторую половину,
+// ffmpeg, deno). Если программу закрыть, Windows остановит их сама.
+// ponytail: по одному дескриптору задания на запуск yt-dlp до закрытия программы —
+// их десятки, не тысячи; закрывать после Wait, если счёт пойдёт на тысячи.
+func track(cmd *exec.Cmd) (kill func()) {
+	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
-		return 0
+		return func() { cmd.Process.Kill() }
 	}
 	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-	windows.SetInformationJobObject(h, windows.JobObjectExtendedLimitInformation,
+	windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
 		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info)))
-	return h
-}()
-
-func track(cmd *exec.Cmd) {
-	p, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(cmd.Process.Pid))
-	if err != nil {
-		return
+	if p, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(cmd.Process.Pid)); err == nil {
+		windows.AssignProcessToJobObject(job, p)
+		windows.CloseHandle(p)
 	}
-	windows.AssignProcessToJobObject(job, p)
-	windows.CloseHandle(p)
+	return func() {
+		windows.TerminateJobObject(job, 1)
+		cmd.Process.Kill()
+	}
 }
 
-func killTree(cmd *exec.Cmd) {
-	windows.TerminateJobObject(job, 1)
-	cmd.Process.Kill()
+// pickFolder показывает стандартное окно Windows «Обзор папок»; "" — человек передумал.
+// ponytail: старое окно-дерево через SHBrowseForFolder; современное (IFileOpenDialog)
+// требует ручной работы с COM — менять, если дерево окажется неудобным.
+func pickFolder() string {
+	picked := make(chan string)
+	go func() {
+		// Окну нужен свой поток с включённым OLE. Поток не возвращаем Go:
+		// когда функция закончится, он завершится вместе с настройками OLE.
+		runtime.LockOSThread()
+		ole32.NewProc("OleInitialize").Call(0)
+
+		title, _ := windows.UTF16PtrFromString("Куда сохранять видео?")
+		var name, path [windows.MAX_PATH]uint16
+		info := struct { // BROWSEINFOW
+			owner, root uintptr
+			name, title *uint16
+			flags       uint32
+			callback    uintptr
+			param       uintptr
+			image       int32
+		}{owner: findWindow(), name: &name[0], title: title, flags: 0x1 | 0x40} // только настоящие папки | окно с кнопкой «Создать папку»
+		item, _, _ := shell32.NewProc("SHBrowseForFolderW").Call(uintptr(unsafe.Pointer(&info)))
+		if item == 0 {
+			picked <- ""
+			return
+		}
+		ok, _, _ := shell32.NewProc("SHGetPathFromIDListW").Call(item, uintptr(unsafe.Pointer(&path[0])))
+		ole32.NewProc("CoTaskMemFree").Call(item)
+		if ok == 0 {
+			picked <- ""
+			return
+		}
+		picked <- windows.UTF16ToString(path[:])
+	}()
+	return <-picked
 }

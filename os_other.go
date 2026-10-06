@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -28,6 +29,11 @@ func openPath(p string) { exec.Command("open", p).Start() }
 
 func hide(cmd *exec.Cmd) { cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} }
 
-func track(cmd *exec.Cmd) {}
+func track(cmd *exec.Cmd) (kill func()) {
+	return func() { syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+}
 
-func killTree(cmd *exec.Cmd) { syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+func pickFolder() string {
+	out, _ := exec.Command("osascript", "-e", `POSIX path of (choose folder with prompt "Куда сохранять видео?")`).Output()
+	return strings.TrimSpace(string(out))
+}
